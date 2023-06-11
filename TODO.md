@@ -23,14 +23,12 @@ Stuff to be investigated...
 
 Pick & merge PRs from main repo...
 
-- Compare commits: <https://github.com/vladmandic/automatic/compare/e59ebe25..b6289d5>
-
-## Models
-
-StabilityAI is working on new stuff...
-
-- SD XL
-- SD ReImagined
+- <https://github.com/AUTOMATIC1111/stable-diffusion-webui/compare/89f9faa...baf6946>
+- TODO:
+  - ruff stuff from 05/10/2023
+  - modules/sub_quadratic_attention.py
+  - <https://github.com/AUTOMATIC1111/stable-diffusion-webui/commit/1332c46b71b169b889d7df420f3285d9022da5cc>
+- STATUS: up-to-date 05/13/2023
 
 ## Integration
 
@@ -43,19 +41,16 @@ Tech that can be integrated as part of the core workflow...
 - [Dream artist](https://github.com/7eu7d7/DreamArtist-sd-webui-extension)
 - [QuickEmbedding](https://github.com/ethansmith2000/QuickEmbedding)
 - [DataComp CLiP](https://github.com/mlfoundations/open_clip/blob/main/docs/datacomp_models.md)
+- [ClipSeg](https://github.com/timojl/clipseg)
 - `TensorRT`
 
 ## Random
 
 - Bunch of stuff: <https://pharmapsychotic.com/tools.html>
 - <https://towardsdatascience.com/mastering-memoization-in-python-dcdd8b435189>
-- <https://github.com/AUTOMATIC1111/stable-diffusion-webui/compare/89f9faa...20ae71f>
-- <https://github.com/vladmandic/automatic/discussions/1246>
 - shared.info
-- hints
-- localization
 - docker
 - port `p.all_hr_prompts`
 - test `lyco_patch_lora`
 - fix `lyco` logging
-- git diff index
+- save `ui-settings.json`

@@ -128,7 +128,7 @@ function requestProgress(id_task, progressEl, galleryEl, atEnd = null, onProgres
       if (res.live_preview && !livePreview) init();
       if (res.live_preview && galleryEl) img.src = res.live_preview;
       if (onProgress) onProgress(res);
-      setTimeout(() => start(id_task, res.id_live_preview), opts.live_preview_refresh_period || 250);
+      setTimeout(() => start(id_task, id_live_preview), opts.live_preview_refresh_period || 250);
     }, done);
   };
   start(id_task, 0);
