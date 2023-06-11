@@ -1304,15 +1304,15 @@ def create_ui():
 
         return res
 
-    def create_dirty_indicator(key, keys_to_reset, **kwargs):
+    def create_dirty_tab_indicator(key, keys_to_reset, **kwargs):
         def get_opt_values():
             return [getattr(opts, _key) for _key in keys_to_reset]
 
         elements_to_reset = [component_dict[_key] for _key in keys_to_reset]
         indicator = gr.Button(
             "",
-            elem_classes="modification-indicator",
-            elem_id="modification_indicator_" + key,
+            elem_classes=["modification-indicator", "tab-indicator"],
+            elem_id="modification_indicator_tab_" + key,
             **kwargs
         )
         indicator.click(fn=get_opt_values, outputs=elements_to_reset, show_progress=False)
@@ -1377,8 +1377,8 @@ def create_ui():
                 section_must_be_skipped = item.section[0] is None
                 if previous_section != item.section and not section_must_be_skipped:
                     elem_id, text = item.section
-                    if current_tab is not None:
-                        create_dirty_indicator(previous_section[0], tab_item_keys)
+                    if current_tab is not None and len(previous_section) > 0:
+                        create_dirty_tab_indicator(previous_section[0], tab_item_keys)
                         tab_item_keys = []
                         current_row.__exit__()
                         current_tab.__exit__()
@@ -1397,8 +1397,8 @@ def create_ui():
                     component_dict[k] = component
                     tab_item_keys.append(k)
                     components.append(component)
-            if current_tab is not None:
-                create_dirty_indicator(previous_section[0], tab_item_keys)
+            if current_tab is not None and len(previous_section) > 0:
+                create_dirty_tab_indicator(previous_section[0], tab_item_keys)
                 tab_item_keys = []
                 current_row.__exit__()
                 current_tab.__exit__()
@@ -1406,9 +1406,9 @@ def create_ui():
             request_notifications = gr.Button(value='Request browser notifications', elem_id="request_notifications", visible=False)
             with gr.TabItem("Licenses", id="licenses", elem_id="settings_tab_licenses"):
                 gr.HTML(modules.shared.html("licenses.html"), elem_id="licenses")
-                create_dirty_indicator("tab_licenses", [], interactive=False)
+                create_dirty_tab_indicator("tab_licenses", [], interactive=False)
             with gr.TabItem("Show all pages", variant='primary', elem_id="settings_show_all_pages"):
-                create_dirty_indicator("show_all_pages", [], interactive=False)
+                create_dirty_tab_indicator("show_all_pages", [], interactive=False)
 
         def unload_sd_weights():
             modules.sd_models.unload_model_weights()

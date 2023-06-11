@@ -308,7 +308,7 @@ onOptionsChanged(function(){
 onUiLoaded(function(){
     let tab_nav_element = gradioApp().querySelector('#settings > .tab-nav')
     let tab_nav_buttons = gradioApp().querySelectorAll('#settings > .tab-nav > button')
-    let tab_elements = gradioApp().querySelectorAll('#settings > div:not(.tab-nav)')
+    let tab_elements = gradioApp().querySelectorAll('#settings > .tabitem')
 
     // HACK Add mutation observer to keep gradio from closing setting tabs when showing all pages
     const observer = new MutationObserver(function(mutations) {
@@ -330,8 +330,8 @@ onUiLoaded(function(){
 
     tab_elements.forEach(function(elem, index){
         // Move the modification indicator to the toplevel tab button
-        let tab_name = elem.id.replace("settings_", "")
-        let indicator = gradioApp().getElementById("modification_indicator_"+tab_name)
+        let indicator = elem.querySelector('.modification-indicator.tab-indicator')
+        indicator ||= document.createElement('button', {className: 'modification-indicator tab-indicator'})
         tab_nav_element.insertBefore(indicator, tab_nav_buttons[index])
 
         // Add the tab content to the wrapper
@@ -366,7 +366,7 @@ function markIfModified(setting_name, value) {
     let unsaved = opts_tabs[tab_name].unsaved_keys
 
     // Set the indicator on the tab nav element
-    let tab_nav_indicator = gradioApp().getElementById('modification_indicator_'+tab_name)
+    let tab_nav_indicator = gradioApp().getElementById('modification_indicator_tab_'+tab_name)
     tab_nav_indicator.disabled = (changed_items.size == 0) && (unsaved.size == 0)
     tab_nav_indicator.title = '';
     tab_nav_indicator.classList.toggle('changed', changed_items.size > 0)
