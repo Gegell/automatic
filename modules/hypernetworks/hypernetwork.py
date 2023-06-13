@@ -8,10 +8,6 @@ from statistics import stdev, mean
 from rich import progress
 import tqdm
 import torch
-try:
-    import intel_extension_for_pytorch as ipex # pylint: disable=import-error, unused-import
-except:
-    pass
 from torch import einsum
 from torch.nn.init import normal_, xavier_normal_, xavier_uniform_, kaiming_normal_, kaiming_uniform_, zeros_
 from einops import rearrange, repeat
@@ -594,10 +590,8 @@ def train_hypernetwork(id_task, hypernetwork_name, learn_rate, batch_size, gradi
             print(e)
 
     if shared.cmd_opts.use_ipex:
-        scaler = ipex.cpu.autocast._grad_scaler.GradScaler() #scaler.step(optimizer): PI_ERROR_INVALID_ARG_VALUE
-        shared.sd_model = shared.sd_model.to(dtype=torch.float32)
         shared.sd_model.train()
-        shared.sd_model, optimizer = ipex.optimize(shared.sd_model, optimizer=optimizer, dtype=devices.dtype)           
+        shared.sd_model, optimizer = torch.xpu.optimize(shared.sd_model.to(dtype=torch.float32), optimizer=optimizer, dtype=devices.dtype) 
     else:
         scaler = torch.cuda.amp.GradScaler()
 
@@ -663,7 +657,10 @@ def train_hypernetwork(id_task, hypernetwork_name, learn_rate, batch_size, gradi
                     del c
 
                     _loss_step += loss.item()
-                scaler.scale(loss).backward()
+                if shared.cmd_opts.use_ipex:
+                    loss.backward()
+                else:
+                    scaler.scale(loss).backward()
 
                 # go back until we reach gradient accumulation steps
                 if (j + 1) % gradient_step != 0:
@@ -672,8 +669,11 @@ def train_hypernetwork(id_task, hypernetwork_name, learn_rate, batch_size, gradi
                 if clip_grad:
                     clip_grad(weights, clip_grad_sched.learn_rate)
 
-                scaler.step(optimizer)
-                scaler.update()
+                if shared.cmd_opts.use_ipex:
+                    optimizer.step()
+                else:
+                    scaler.step(optimizer)
+                    scaler.update()
                 hypernetwork.step += 1
                 pbar.update()
                 optimizer.zero_grad(set_to_none=True)
