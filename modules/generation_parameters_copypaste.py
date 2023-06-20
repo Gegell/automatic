@@ -20,14 +20,14 @@ registered_param_bindings = []
 
 
 class ParamBinding:
-    def __init__(self, paste_button, tabname, source_text_component=None, source_image_component=None, source_tabname=None, override_settings_component=None, paste_field_names=[]):
+    def __init__(self, paste_button, tabname, source_text_component=None, source_image_component=None, source_tabname=None, override_settings_component=None, paste_field_names=None):
         self.paste_button = paste_button
         self.tabname = tabname
         self.source_text_component = source_text_component
         self.source_image_component = source_image_component
         self.source_tabname = source_tabname
         self.override_settings_component = override_settings_component
-        self.paste_field_names = paste_field_names
+        self.paste_field_names = paste_field_names or []
 
 
 def reset():
@@ -59,6 +59,11 @@ def image_from_url_text(filedata):
         is_in_right_dir = ui_tempdir.check_tmp_file(shared.demo, filename)
         if is_in_right_dir:
             filename = filename.rsplit('?', 1)[0]
+            if not os.path.exists(filename):
+                shared.log.error(f'Image file not found: {filename}')
+                image = Image.new('RGB', (512, 512))
+                image.info['parameters'] = f'Image file not found: {filename}'
+                return image
             image = Image.open(filename)
             geninfo, _items = images.read_info_from_image(image)
             image.info['parameters'] = geninfo
@@ -254,7 +259,7 @@ Steps: 20, Sampler: Euler a, CFG scale: 7, Seed: 965400086, Size: 512x512, Model
     if len(re_param.findall(lastline)) < 3:
         lines.append(lastline)
         lastline = ''
-    for _i, line in enumerate(lines):
+    for line in lines:
         line = line.strip()
         if line.startswith("Negative prompt:"):
             done_with_prompt = True
@@ -275,7 +280,6 @@ Steps: 20, Sampler: Euler a, CFG scale: 7, Seed: 965400086, Size: 512x512, Model
         else:
             res[k] = v
 
-
     # Missing CLIP skip means it was set to 1 (the default)
     if "Clip skip" not in res:
         res["Clip skip"] = "1"
@@ -285,28 +289,6 @@ Steps: 20, Sampler: Euler a, CFG scale: 7, Seed: 965400086, Size: 512x512, Model
     if "Hires resize-1" not in res:
         res["Hires resize-1"] = 0
         res["Hires resize-2"] = 0
-    # Infer additional override settings for token merging
-    token_merging_ratio = res.get("Token merging ratio", None)
-    token_merging_ratio_hr = res.get("Token merging ratio hr", None)
-    if token_merging_ratio is not None or token_merging_ratio_hr is not None:
-        res["Token merging"] = 'True'
-        if token_merging_ratio is None:
-            res["Token merging hr only"] = 'True'
-        else:
-            res["Token merging hr only"] = 'False'
-        if res.get("Token merging random", None) is None:
-            res["Token merging random"] = 'False'
-        if res.get("Token merging merge attention", None) is None:
-            res["Token merging merge attention"] = 'True'
-        if res.get("Token merging merge cross attention", None) is None:
-            res["Token merging merge cross attention"] = 'False'
-        if res.get("Token merging merge mlp", None) is None:
-            res["Token merging merge mlp"] = 'False'
-        if res.get("Token merging stride x", None) is None:
-            res["Token merging stride x"] = '2'
-        if res.get("Token merging stride y", None) is None:
-            res["Token merging stride y"] = '2'
-
     restore_old_hires_fix_params(res)
     return res
 
@@ -326,17 +308,8 @@ infotext_to_setting_name_mapping = [
     ('UniPC skip type', 'uni_pc_skip_type'),
     ('UniPC order', 'uni_pc_order'),
     ('UniPC lower order final', 'uni_pc_lower_order_final'),
-    ('Token merging', 'token_merging'),
     ('Token merging ratio', 'token_merging_ratio'),
-    ('Token merging hr only', 'token_merging_hr_only'),
     ('Token merging ratio hr', 'token_merging_ratio_hr'),
-    ('Token merging random', 'token_merging_random'),
-    ('Token merging merge attention', 'token_merging_merge_attention'),
-    ('Token merging merge cross attention', 'token_merging_merge_cross_attention'),
-    ('Token merging merge mlp', 'token_merging_merge_mlp'),
-    ('Token merging maximum downsampling', 'token_merging_maximum_down_sampling'),
-    ('Token merging stride x', 'token_merging_stride_x'),
-    ('Token merging stride y', 'token_merging_stride_y')
 ]
 
 

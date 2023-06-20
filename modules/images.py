@@ -150,7 +150,7 @@ def draw_grid_annotations(im, width, height, hor_texts, ver_texts, margin=0):
             return ImageFont.truetype('html/roboto.ttf', fontsize)
 
     def draw_texts(drawing, draw_x, draw_y, lines, initial_fnt, initial_fontsize):
-        for _i, line in enumerate(lines):
+        for line in lines:
             fnt = initial_fnt
             fontsize = initial_fontsize
             while drawing.multiline_textsize(line.text, font=fnt)[0] > line.allowed_width and fontsize > 0:
@@ -289,6 +289,7 @@ def sanitize_filename_part(text, replace_spaces=True):
     text = os.path.basename(text)
     if replace_spaces:
         text = text.replace(' ', '_')
+    text = text.replace('#', '_')
     text = text.translate({ord(x): '_' for x in invalid_filename_chars})
     text = text.lstrip(invalid_filename_prefix)[:max_filename_part_length]
     text = text.rstrip(invalid_filename_postfix)
@@ -368,12 +369,12 @@ class FilenameGenerator:
         time_format = args[0] if len(args) > 0 and args[0] != "" else self.default_time_format
         try:
             time_zone = pytz.timezone(args[1]) if len(args) > 1 else None
-        except pytz.exceptions.UnknownTimeZoneError as _:
+        except pytz.exceptions.UnknownTimeZoneError:
             time_zone = None
         time_zone_time = time_datetime.astimezone(time_zone)
         try:
             formatted_time = time_zone_time.strftime(time_format)
-        except (ValueError, TypeError) as _:
+        except (ValueError, TypeError):
             formatted_time = time_zone_time.strftime(self.default_time_format)
         return sanitize_filename_part(formatted_time, replace_spaces=False)
 
@@ -418,9 +419,9 @@ def get_next_sequence_number(path, basename):
     prefix_length = len(basename)
     for p in os.listdir(path):
         if p.startswith(basename):
-            l = os.path.splitext(p[prefix_length:])[0].split('-')  # splits the filename (removing the basename first if one is defined, so the sequence number is always the first element)
+            parts = os.path.splitext(p[prefix_length:])[0].split('-')  # splits the filename (removing the basename first if one is defined, so the sequence number is always the first element)
             try:
-                result = max(int(l[0]), result)
+                result = max(int(parts[0]), result)
             except ValueError:
                 pass
     return result + 1
@@ -441,23 +442,24 @@ def atomically_save_image():
             image_format = 'JPEG'
         shared.log.debug(f'Saving image: {image_format} {fn} {image.size}')
         # actual save
+        exifinfo_data = (exifinfo_data or "") if shared.opts.image_metadata else ""
         if image_format == 'PNG':
             pnginfo_data = PngImagePlugin.PngInfo()
             for k, v in params.pnginfo.items():
                 pnginfo_data.add_text(k, str(v))
-            image.save(fn, format=image_format, quality=shared.opts.jpeg_quality, pnginfo=pnginfo_data)
+            image.save(fn, format=image_format, quality=shared.opts.jpeg_quality, pnginfo=pnginfo_data if shared.opts.image_metadata else None)
         elif image_format == 'JPEG':
             if image.mode == 'RGBA':
                 shared.log.warning('Saving RGBA image as JPEG: Alpha channel will be lost')
                 image = image.convert("RGB")
             elif image.mode == 'I;16':
                 image = image.point(lambda p: p * 0.0038910505836576).convert("L")
-            exif_bytes = piexif.dump({ "Exif": { piexif.ExifIFD.UserComment: piexif.helper.UserComment.dump(exifinfo_data or "", encoding="unicode") } })
+            exif_bytes = piexif.dump({ "Exif": { piexif.ExifIFD.UserComment: piexif.helper.UserComment.dump(exifinfo_data, encoding="unicode") } })
             image.save(fn, format=image_format, quality=shared.opts.jpeg_quality, exif=exif_bytes)
         elif image_format == 'WEBP':
             if image.mode == 'I;16':
                 image = image.point(lambda p: p * 0.0038910505836576).convert("RGB")
-            exif_bytes = piexif.dump({ "Exif": { piexif.ExifIFD.UserComment: piexif.helper.UserComment.dump(exifinfo_data or "", encoding="unicode") } })
+            exif_bytes = piexif.dump({ "Exif": { piexif.ExifIFD.UserComment: piexif.helper.UserComment.dump(exifinfo_data, encoding="unicode") } })
             try:
                 image.save(fn, format=image_format, quality=shared.opts.jpeg_quality, lossless=shared.opts.webp_lossless, exif=exif_bytes)
             except Exception as e:
@@ -600,7 +602,7 @@ def safe_decode_string(s: bytes):
             if len(val) == 0: # remove empty strings
                 val = None
             return val
-        except:
+        except Exception:
             pass
     return None
 

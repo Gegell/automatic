@@ -48,33 +48,64 @@ git_commit = "unknown"
 
 
 # setup console and file logging
-def setup_logging(clean=False):
-    try:
-        if clean and os.path.isfile(log_file):
-            os.remove(log_file)
-        time.sleep(0.1) # prevent race condition
-    except:
-        pass
+def setup_logging():
+
+    class RingBuffer(logging.StreamHandler):
+        def __init__(self, capacity):
+            super().__init__()
+            self.capacity = capacity
+            self.buffer = []
+            self.formatter = logging.Formatter('{ "asctime":"%(asctime)s", "created":%(created)f, "facility":"%(name)s", "pid":%(process)d, "tid":%(thread)d, "level":"%(levelname)s", "module":"%(module)s", "func":"%(funcName)s", "msg":"%(message)s" }')
+
+        def emit(self, record):
+            msg = self.format(record)
+            # self.buffer.append(json.loads(msg))
+            self.buffer.append(msg)
+            if len(self.buffer) > self.capacity:
+                self.buffer.pop(0)
+
+        def get(self):
+            return self.buffer
+
+    from logging.handlers import RotatingFileHandler
     from rich.theme import Theme
     from rich.logging import RichHandler
     from rich.console import Console
     from rich.pretty import install as pretty_install
     from rich.traceback import install as traceback_install
+
+    level = logging.DEBUG if args.debug else logging.INFO
+    log.setLevel(logging.DEBUG) # log to file is always at level debug for facility `sd`
     console = Console(log_time=True, log_time_format='%H:%M:%S-%f', theme=Theme({
         "traceback.border": "black",
         "traceback.border.syntax_error": "black",
         "inspect.value.border": "black",
     }))
-    level = logging.DEBUG if args.debug else logging.INFO
-    logging.basicConfig(level=logging.ERROR, format='%(asctime)s | %(name)s | %(levelname)s | %(module)s | %(message)s', filename=log_file, filemode='a', encoding='utf-8', force=True)
-    log.setLevel(logging.DEBUG) # log to file is always at level debug for facility `sd`
+    try:
+        logging.basicConfig(level=logging.ERROR, format='%(asctime)s | %(name)s | %(levelname)s | %(module)s | %(message)s', filename=log_file, filemode='a', encoding='utf-8', force=True)
+    except Exception:
+        logging.basicConfig(level=logging.ERROR, format='%(asctime)s | %(name)s | %(levelname)s | %(module)s | %(message)s') # to be able to report unsupported python version
     pretty_install(console=console)
     traceback_install(console=console, extra_lines=1, width=console.width, word_wrap=False, indent_guides=False, suppress=[])
-    rh = RichHandler(show_time=True, omit_repeated_times=False, show_level=True, show_path=False, markup=False, rich_tracebacks=True, log_time_format='%H:%M:%S-%f', level=level, console=console)
-    rh.set_name(level)
     while log.hasHandlers() and len(log.handlers) > 0:
         log.removeHandler(log.handlers[0])
+
+    # handlers
+    rh = RichHandler(show_time=True, omit_repeated_times=False, show_level=True, show_path=False, markup=False, rich_tracebacks=True, log_time_format='%H:%M:%S-%f', level=level, console=console)
+    rh.setLevel(level)
     log.addHandler(rh)
+
+    fh = RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=5, encoding='utf-8', delay=True) # 10MB default for log rotation
+    fh.formatter = logging.Formatter('%(asctime)s | %(name)s | %(levelname)s | %(module)s | %(message)s')
+    fh.setLevel(logging.DEBUG)
+    log.addHandler(fh)
+
+    rb = RingBuffer(100) # 100 entries default in log ring buffer
+    rb.setLevel(level)
+    log.addHandler(rb)
+    log.buffer = rb.buffer
+
+    # overrides
     logging.getLogger("urllib3").setLevel(logging.ERROR)
     logging.getLogger("httpx").setLevel(logging.ERROR)
     logging.getLogger("ControlNet").handlers = log.handlers
@@ -83,7 +114,7 @@ def setup_logging(clean=False):
 def print_profile(profile: cProfile.Profile, msg: str):
     try:
         from rich import print # pylint: disable=redefined-builtin
-    except:
+    except Exception:
         pass
     profile.disable()
     stream = io.StringIO()
@@ -91,7 +122,7 @@ def print_profile(profile: cProfile.Profile, msg: str):
     ps.sort_stats(pstats.SortKey.CUMULATIVE).print_stats(15)
     profile = None
     lines = stream.getvalue().split('\n')
-    lines = [l for l in lines if '<frozen' not in l and '{built-in' not in l and '/logging' not in l and '/rich' not in l]
+    lines = [line for line in lines if '<frozen' not in line and '{built-in' not in line and '/logging' not in line and '/rich' not in line]
     print(f'Profile {msg}:', '\n'.join(lines))
 
 
@@ -223,7 +254,7 @@ def clone(url, folder, commithash=None):
 def check_python():
     supported_minors = [9, 10]
     if args.quick:
-        return True
+        return
     if args.experimental:
         supported_minors.append(11)
     log.info(f'Python {platform.python_version()} on {platform.system()}')
@@ -245,7 +276,7 @@ def check_python():
 # check torch version
 def check_torch():
     if args.quick:
-        return True
+        return
     if args.profile:
         pr = cProfile.Profile()
         pr.enable()
@@ -261,7 +292,7 @@ def check_torch():
     elif allow_cuda and (shutil.which('nvidia-smi') is not None or os.path.exists(os.path.join(os.environ.get('SystemRoot') or r'C:\Windows', 'System32', 'nvidia-smi.exe'))):
         log.info('nVidia CUDA toolkit detected')
         torch_command = os.environ.get('TORCH_COMMAND', 'torch torchvision --index-url https://download.pytorch.org/whl/cu118')
-        xformers_package = os.environ.get('XFORMERS_PACKAGE', 'xformers==0.0.17' if opts.get('cross_attention_optimization', '') == 'xFormers' else 'none')
+        xformers_package = os.environ.get('XFORMERS_PACKAGE', 'xformers==0.0.20' if opts.get('cross_attention_optimization', '') == 'xFormers' else 'none')
     elif allow_rocm and (shutil.which('rocminfo') is not None or os.path.exists('/opt/rocm/bin/rocminfo') or os.path.exists('/dev/kfd')):
         log.info('AMD ROCm toolkit detected')
         os.environ.setdefault('HSA_OVERRIDE_GFX_VERSION', '10.3.0')
@@ -298,8 +329,8 @@ def check_torch():
                 import intel_extension_for_pytorch as ipex # pylint: disable=import-error, unused-import
                 log.info(f'Torch backend: Intel IPEX {ipex.__version__}')
                 log.info(f'{os.popen("icpx --version").read().rstrip()}')
-                for device in [torch.xpu.device(i) for i in range(torch.xpu.device_count())]:
-                    log.info(f'Torch detected GPU: {torch.xpu.get_device_name(device)} VRAM {round(torch.xpu.get_device_properties(device).total_memory / 1024 / 1024)}')
+                for device in range(torch.xpu.device_count()):
+                    log.info(f'Torch detected GPU: {torch.xpu.get_device_name(device)} VRAM {round(torch.xpu.get_device_properties(device).total_memory / 1024 / 1024)} Compute Units {torch.xpu.get_device_properties(device).max_compute_units}')
             elif torch.cuda.is_available() and (allow_cuda or allow_rocm):
                 # log.debug(f'Torch allocator: {torch.cuda.get_allocator_backend()}')
                 if torch.version.cuda and allow_cuda:
@@ -318,7 +349,7 @@ def check_torch():
                         log.info(f'Torch backend: DirectML ({version})')
                         for i in range(0, torch_directml.device_count()):
                             log.info(f'Torch detected GPU: {torch_directml.device_name(i)}')
-                except:
+                except Exception:
                     log.warning("Torch reports CUDA not available")
         except Exception as e:
             log.error(f'Could not load torch: {e}')
@@ -350,7 +381,7 @@ def check_torch():
 # check modified files
 def check_modified_files():
     if args.quick:
-        return True
+        return
     if args.skip_git:
         return
     try:
@@ -359,7 +390,7 @@ def check_modified_files():
         files = [x for x in files if len(x) > 0 and not x.startswith('extensions') and not x.startswith('wiki') and not x.endswith('.json')]
         if len(files) > 0:
             log.warning(f'Modified files: {files}')
-    except:
+    except Exception:
         pass
 
 
@@ -479,7 +510,7 @@ def install_extensions():
             if not args.skip_update:
                 try:
                     update(os.path.join(folder, ext))
-                except:
+                except Exception:
                     log.error(f'Error updating extension: {os.path.join(folder, ext)}')
             if not args.skip_extensions:
                 run_extension_installer(os.path.join(folder, ext))
@@ -522,7 +553,7 @@ def install_submodules():
             try:
                 name = submodule.split()[1].strip()
                 update(name)
-            except:
+            except Exception:
                 log.error(f'Error updating submodule: {submodule}')
     if args.profile:
         print_profile(pr, 'Submodule')
@@ -609,11 +640,7 @@ def check_version(offline=False, reset=True): # pylint: disable=unused-argument
             sys.exit(1)
     ver = git('log -1 --pretty=format:"%h %ad"')
     log.info(f'Version: {ver}')
-    if args.quick:
-        return True
-    if args.version:
-        return
-    if args.skip_git:
+    if args.quick or args.version or args.skip_git:
         return
     commit = git('rev-parse HEAD')
     global git_commit # pylint: disable=global-statement
@@ -656,7 +683,7 @@ def update_wiki():
         try:
             update(os.path.join(os.path.dirname(__file__), "wiki"))
             update(os.path.join(os.path.dirname(__file__), "wiki", "origin-wiki"))
-        except:
+        except Exception:
             log.error('Error updating wiki')
 
 
@@ -745,7 +772,7 @@ def extensions_preload(parser):
             preload_extensions(ext_dir, parser)
             t1 = time.time()
             log.info(f'Extension preload: {round(t1 - t0, 1)}s {ext_dir}')
-    except:
+    except Exception:
         log.error('Error running extension preloading')
     if args.profile:
         print_profile(pr, 'Preload')

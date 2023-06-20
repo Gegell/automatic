@@ -50,13 +50,13 @@ class StyleDatabase:
             self.save_styles(self.path)
 
         with open(self.path, "r", encoding="utf-8-sig", newline='') as file:
-            reader = csv.DictReader(file)
+            reader = csv.DictReader(file, skipinitialspace=True)
             for row in reader:
                 try:
                     prompt = row["prompt"] if "prompt" in row else row["text"]
                     negative_prompt = row.get("negative_prompt", "")
                     self.styles[row["name"]] = PromptStyle(row["name"], prompt, negative_prompt)
-                except:
+                except Exception:
                     pass
 
     def get_style_prompts(self, styles):

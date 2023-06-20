@@ -1,9 +1,7 @@
 import modules.scripts
-from modules import sd_samplers, shared
+from modules import sd_samplers, shared, processing
 from modules.generation_parameters_copypaste import create_override_settings_dict
-from modules.processing import StableDiffusionProcessingTxt2Img, process_images
-# from modules.shared import opts, sd_model, debug
-from modules.ui import plaintext_to_html, infotext_to_html
+from modules.ui import plaintext_to_html
 from modules.memstats import memory_stats
 
 
@@ -17,9 +15,9 @@ def txt2img(id_task: str, prompt: str, negative_prompt: str, prompt_styles, step
 
     if shared.sd_model is None:
         shared.log.warning('Model not loaded')
-        return
+        return [], '', '', 'Error: model not loaded'
 
-    p = StableDiffusionProcessingTxt2Img(
+    p = processing.StableDiffusionProcessingTxt2Img(
         sd_model=shared.sd_model,
         outpath_samples=shared.opts.outdir_samples or shared.opts.outdir_txt2img_samples,
         outpath_grids=shared.opts.outdir_grids or shared.opts.outdir_txt2img_grids,
@@ -55,8 +53,8 @@ def txt2img(id_task: str, prompt: str, negative_prompt: str, prompt_styles, step
     p.script_args = args
     processed = modules.scripts.scripts_txt2img.run(p, *args)
     if processed is None:
-        processed = process_images(p)
+        processed = processing.process_images(p)
     p.close()
     generation_info_js = processed.js()
     shared.log.debug(f'Processed: {len(processed.images)} Memory: {memory_stats()} txt')
-    return processed.images, generation_info_js, infotext_to_html(processed.info), plaintext_to_html(processed.comments)
+    return processed.images, generation_info_js, processed.info, plaintext_to_html(processed.comments)

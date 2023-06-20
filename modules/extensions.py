@@ -86,7 +86,7 @@ class Extension:
     def check_updates(self):
         try:
             repo = git.Repo(self.path)
-        except:
+        except Exception:
             self.can_update = False
             return
         for fetch in repo.remote().fetch(dry_run=True):
@@ -126,8 +126,6 @@ def list_extensions():
     extension_paths = []
     extension_names = []
     extension_folders = [extensions_builtin_dir] if shared.cmd_opts.safe else [extensions_builtin_dir, extensions_dir]
-    if shared.cmd_opts.base:
-        extension_folders = []
     for dirname in extension_folders:
         if not os.path.isdir(dirname):
             return

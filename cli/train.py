@@ -6,7 +6,6 @@ import re
 import gc
 import sys
 import json
-import time
 import shutil
 import pathlib
 import asyncio
@@ -39,13 +38,7 @@ log_file = os.path.join(os.path.dirname(__file__), 'train.log')
 
 # methods
 
-def setup_logging(clean=False):
-    try:
-        if clean and os.path.isfile(log_file):
-            os.remove(log_file)
-        time.sleep(0.1) # prevent race condition
-    except:
-        pass
+def setup_logging():
     from rich.theme import Theme
     from rich.logging import RichHandler
     from rich.console import Console
@@ -128,7 +121,7 @@ def prepare_server():
     try:
         server_status = util.Map(sdapi.progresssync())
         server_state = server_status['state']
-    except:
+    except Exception:
         log.error(f'server error: {server_status}')
         exit(1)
     if server_state['job_count'] > 0:
@@ -399,7 +392,7 @@ if __name__ == '__main__':
             train_embedding()
         if args.type == 'lora' or args.type == 'lyco' or args.type == 'dreambooth':
             train_lora()
-    except KeyboardInterrupt as e:
+    except KeyboardInterrupt:
         log.error('interrupt requested')
         sdapi.interrupt()
     mem_stats()

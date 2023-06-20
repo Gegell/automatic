@@ -14,6 +14,9 @@ Stuff to be added...
 - Import core repos
 - Update `train.py` to use `interrogator`
 - Update `train.py` to use `rembg`
+- Create new train UI
+- Create new Models UI
+- Intelligent preview mode
 
 ## Investigate
 
@@ -23,12 +26,7 @@ Stuff to be investigated...
 
 Pick & merge PRs from main repo...
 
-- <https://github.com/AUTOMATIC1111/stable-diffusion-webui/compare/89f9faa...baf6946>
-- TODO:
-  - ruff stuff from 05/10/2023
-  - modules/sub_quadratic_attention.py
-  - <https://github.com/AUTOMATIC1111/stable-diffusion-webui/commit/1332c46b71b169b889d7df420f3285d9022da5cc>
-- STATUS: up-to-date 05/13/2023
+- list: <https://github.com/AUTOMATIC1111/stable-diffusion-webui/compare/89f9faa...baf6946>
 
 ## Integration
 

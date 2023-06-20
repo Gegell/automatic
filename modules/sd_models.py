@@ -2,9 +2,11 @@ import collections
 import os.path
 import re
 import io
+import json
 import threading
 from os import mkdir
 from urllib import request
+import filelock
 from rich import progress # pylint: disable=redefined-builtin
 import torch
 import safetensors.torch
@@ -26,6 +28,9 @@ checkpoints_list = {}
 checkpoint_aliases = {}
 checkpoints_loaded = collections.OrderedDict()
 skip_next_load = False
+sd_metadata_file = os.path.join(paths.data_path, "metadata.json")
+sd_metadata = None
+sd_metadata_pending = 0
 
 
 class CheckpointInfo:
@@ -186,13 +191,13 @@ def model_hash(filename):
             return m.hexdigest()[0:8]
     except FileNotFoundError:
         return 'NOFILE'
-    except:
+    except Exception:
         return 'NOHASH'
 
 
 def select_checkpoint(model=True):
     model_checkpoint = shared.opts.sd_model_checkpoint if model else shared.opts.sd_model_dict
-    checkpoint_info = checkpoint_aliases.get(model_checkpoint, None)
+    checkpoint_info = get_closet_checkpoint_match(model_checkpoint)
     if checkpoint_info is not None:
         shared.log.debug(f'Select checkpoint: {checkpoint_info.title if checkpoint_info is not None else None}')
         return checkpoint_info
@@ -235,24 +240,63 @@ def get_state_dict_from_checkpoint(pl_sd):
     return pl_sd
 
 
+def write_metadata():
+    def default(obj):
+        shared.log.debug(f"Model metadata not a valid object: {obj}")
+        return str(obj)
+
+    global sd_metadata_pending # pylint: disable=global-statement
+    if sd_metadata_pending == 0:
+        shared.log.debug(f"Model metadata: {sd_metadata_file} no changes")
+        return
+    with filelock.FileLock(f"{sd_metadata_file}.lock"):
+        try:
+            with open(sd_metadata_file, "w", encoding="utf8") as file:
+                json.dump(sd_metadata, file, indent=4, skipkeys=True, ensure_ascii=True, check_circular=True, allow_nan=True, default=default)
+        except Exception as e:
+            shared.log.error(f"Model metadata save error: {sd_metadata_file} {e}")
+    shared.log.info(f"Model metadata saved: {sd_metadata_file} {sd_metadata_pending}")
+    sd_metadata_pending = 0
+
+
 def read_metadata_from_safetensors(filename):
-    import json
-    with open(filename, mode="rb") as file:
-        metadata_len = file.read(8)
-        metadata_len = int.from_bytes(metadata_len, "little")
-        json_start = file.read(2)
-        assert metadata_len > 2 and json_start in (b'{"', b"{'"), f"{filename} is not a safetensors file"
-        json_data = json_start + file.read(metadata_len-2)
-        json_obj = json.loads(json_data)
-        res = {}
-        for k, v in json_obj.get("__metadata__", {}).items():
-            res[k] = v
-            if isinstance(v, str) and v[0:1] == '{':
+    global sd_metadata # pylint: disable=global-statement
+    if sd_metadata is None:
+        with filelock.FileLock(f"{sd_metadata_file}.lock"):
+            if not os.path.isfile(sd_metadata_file):
+                sd_metadata = {}
+            else:
                 try:
-                    res[k] = json.loads(v)
+                    with open(sd_metadata_file, "r", encoding="utf8") as file:
+                        sd_metadata = json.load(file)
                 except Exception:
-                    pass
+                    sd_metadata = {}
+    res = sd_metadata.get(filename, None)
+    if res is not None:
         return res
+    res = {}
+    try:
+        with open(filename, mode="rb") as file:
+            metadata_len = file.read(8)
+            metadata_len = int.from_bytes(metadata_len, "little")
+            json_start = file.read(2)
+            if metadata_len <= 2 or json_start not in (b'{"', b"{'"):
+                shared.log.error(f"Not a valid safetensors file: {filename}")
+            json_data = json_start + file.read(metadata_len-2)
+            json_obj = json.loads(json_data)
+            for k, v in json_obj.get("__metadata__", {}).items():
+                res[k] = v
+                if isinstance(v, str) and v[0:1] == '{':
+                    try:
+                        res[k] = json.loads(v)
+                    except Exception:
+                        pass
+        sd_metadata[filename] = res
+        global sd_metadata_pending # pylint: disable=global-statement
+        sd_metadata_pending += 1
+    except Exception as e:
+        shared.log.error(f"Error reading metadata from: {filename} {e}")
+    return res
 
 
 def read_state_dict(checkpoint_file, map_location=None): # pylint: disable=unused-argument
@@ -288,7 +332,6 @@ def read_state_dict(checkpoint_file, map_location=None): # pylint: disable=unuse
 
 def get_checkpoint_state_dict(checkpoint_info: CheckpointInfo, timer):
     if checkpoint_info in checkpoints_loaded:
-        # use checkpoint cache
         shared.log.info("Model weights loading: from cache")
         return checkpoints_loaded[checkpoint_info]
     res = read_state_dict(checkpoint_info.filename)
@@ -378,7 +421,7 @@ def enable_midas_autodownload():
 
 
 def repair_config(sd_config):
-    if not "use_ema" in sd_config.model.params:
+    if "use_ema" not in sd_config.model.params:
         sd_config.model.params.use_ema = False
     if shared.opts.no_half:
         sd_config.model.params.unet_config.params.use_fp16 = False
@@ -497,7 +540,6 @@ def load_model(checkpoint_info=None, already_loaded_state_dict=None, timer=None)
         sd_hijack.model_hijack.undo_hijack(model_data.sd_model)
         current_checkpoint_info = model_data.sd_model.sd_checkpoint_info
         unload_model_weights()
-        model_data.sd_model = None
     do_inpainting_hijack()
     devices.set_cuda_params()
     if already_loaded_state_dict is not None:
@@ -551,14 +593,14 @@ def load_model(checkpoint_info=None, already_loaded_state_dict=None, timer=None)
     shared.log.info(f"Model loaded in {timer.summary()}")
     current_checkpoint_info = None
     devices.torch_gc(force=True)
-    shared.log.info(f'Model load finished: {memory_stats()}')
+    shared.log.info(f'Model load finished: {memory_stats()} cached={len(checkpoints_loaded.keys())}')
 
 
 def reload_model_weights(sd_model=None, info=None, reuse_dict=False):
     load_dict = shared.opts.sd_model_dict != model_data.sd_dict
     global skip_next_load # pylint: disable=global-statement
     if skip_next_load:
-        shared.log.debug('Reload model weights skip')
+        shared.log.debug('Load model weights skip')
         skip_next_load = False
         return
     from modules import lowvram, sd_hijack
@@ -568,14 +610,14 @@ def reload_model_weights(sd_model=None, info=None, reuse_dict=False):
         shared.log.debug(f'Model dict: existing={sd_model is not None} target={checkpoint_info.filename} info={info}')
     else:
         model_data.sd_dict = 'None'
-        shared.log.debug(f'Reload model weights: existing={sd_model is not None} target={checkpoint_info.filename} info={info}')
+        shared.log.debug(f'Load model weights: existing={sd_model is not None} target={checkpoint_info.filename} info={info}')
     if not sd_model:
         sd_model = model_data.sd_model
     if sd_model is None:  # previous model load failed
         current_checkpoint_info = None
     else:
         current_checkpoint_info = sd_model.sd_checkpoint_info
-        if checkpoint_info is not None and sd_model.sd_model_checkpoint == checkpoint_info.filename:
+        if checkpoint_info is not None and current_checkpoint_info.filename == checkpoint_info.filename:
             return
         if shared.cmd_opts.lowvram or shared.cmd_opts.medvram:
             lowvram.send_everything_to_cpu()
@@ -593,7 +635,6 @@ def reload_model_weights(sd_model=None, info=None, reuse_dict=False):
     timer.record("config")
     if sd_model is None or checkpoint_config != sd_model.used_config:
         del sd_model
-        checkpoints_loaded.clear()
         if shared.backend == shared.Backend.ORIGINAL:
             load_model(checkpoint_info, already_loaded_state_dict=state_dict, timer=timer)
         else:
@@ -606,7 +647,7 @@ def reload_model_weights(sd_model=None, info=None, reuse_dict=False):
     try:
         load_model_weights(sd_model, checkpoint_info, state_dict, timer)
     except Exception:
-        shared.log.error("Failed to load checkpoint, restoring previous")
+        shared.log.error("Load model failed: restoring previous")
         load_model_weights(sd_model, current_checkpoint_info, None, timer)
     finally:
         sd_hijack.model_hijack.hijack(sd_model)
@@ -625,33 +666,27 @@ def unload_model_weights(sd_model=None, _info=None):
         model_data.sd_model.to(devices.cpu)
         if shared.backend == shared.Backend.ORIGINAL:
             sd_hijack.model_hijack.undo_hijack(model_data.sd_model)
-        model_data.sd_model = None
         sd_model = None
+        model_data.sd_model = None
         devices.torch_gc(force=True)
         shared.log.debug(f'Model weights unloaded: {memory_stats()}')
     return sd_model
 
 
-def apply_token_merging(sd_model, hr: bool):
-    """
-    Applies speed and memory optimizations from tomesd.
-
-    Args:
-        hr (bool): True if called in the context of a high-res pass
-    """
-
-    ratio = shared.opts.token_merging_ratio
-    if hr:
-        ratio = shared.opts.token_merging_ratio_hr
-
-    tomesd.apply_patch(
-        sd_model,
-        ratio=ratio,
-        max_downsample=shared.opts.token_merging_maximum_down_sampling,
-        sx=shared.opts.token_merging_stride_x,
-        sy=shared.opts.token_merging_stride_y,
-        use_rand=shared.opts.token_merging_random,
-        merge_attn=shared.opts.token_merging_merge_attention,
-        merge_crossattn=shared.opts.token_merging_merge_cross_attention,
-        merge_mlp=shared.opts.token_merging_merge_mlp
-    )
+def apply_token_merging(sd_model, token_merging_ratio):
+    current_token_merging_ratio = getattr(sd_model, 'applied_token_merged_ratio', 0)
+    # shared.log.debug(f'Appplying token merging: current={current_token_merging_ratio} target={token_merging_ratio}')
+    if current_token_merging_ratio == token_merging_ratio:
+        return
+    if current_token_merging_ratio > 0:
+        tomesd.remove_patch(sd_model)
+    if token_merging_ratio > 0:
+        tomesd.apply_patch(
+            sd_model,
+            ratio=token_merging_ratio,
+            use_rand=False,  # can cause issues with some samplers
+            merge_attn=True,
+            merge_crossattn=False,
+            merge_mlp=False
+        )
+    sd_model.applied_token_merged_ratio = token_merging_ratio

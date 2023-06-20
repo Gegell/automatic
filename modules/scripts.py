@@ -19,25 +19,17 @@ class PostprocessImageArgs:
 
 
 class Script:
+    name = None
     filename = None
     args_from = None
     args_to = None
     alwayson = False
     is_txt2img = False
     is_img2img = False
-
-    """A gr.Group component that has all script's UI inside it"""
+    api_info = None
     group = None
-
     infotext_fields = None
-    """if set in ui(), this is a list of pairs of gradio component + text; the text will be used when
-    parsing infotext to set the value for the component; see ui.py's txt2img_paste_fields for an example
-    """
-
     paste_field_names = None
-    """if set in ui(), this is a list of names of infotext fields; the fields will be sent through the
-    various "Send to <X>" buttons when clicked
-    """
 
     def title(self):
         """this function should return the title of the script. This is what will be displayed in the dropdown menu."""
@@ -222,7 +214,7 @@ def load_scripts():
     time_load = {}
 
     def register_scripts_from_module(module, scriptfile):
-        for _key, script_class in module.__dict__.items():
+        for script_class in module.__dict__.values():
             if type(script_class) != type:
                 continue
             # log.debug(f'Registering script: {scriptfile.path}')
@@ -245,6 +237,11 @@ def load_scripts():
             current_basedir = paths.script_path
             time_load[scriptfile.basedir] = time_load.get(scriptfile.basedir, 0) + (time.time()-t0)
             sys.path = syspath
+
+    global scripts_txt2img, scripts_img2img, scripts_postproc # pylint: disable=global-statement
+    scripts_txt2img = ScriptRunner()
+    scripts_img2img = ScriptRunner()
+    scripts_postproc = scripts_postprocessing.ScriptPostprocessingRunner()
 
     time_summary = [f'{os.path.basename(k)}:{round(v,3)}s' for (k,v) in time_load.items() if v > 0.05]
     log.debug(f'Scripts load: {time_summary}')
@@ -305,6 +302,7 @@ class ScriptRunner:
                 log.error(f'Script initialize: {path} {e}')
 
     def setup_ui(self):
+        import modules.api.models as api_models
         self.titles = [wrap_call(script.title, script.filename, "title") or f"{script.filename} [error]" for script in self.selectable_scripts]
         inputs = [None]
         inputs_alwayson = [True]
@@ -315,8 +313,23 @@ class ScriptRunner:
             controls = wrap_call(script.ui, script.filename, "ui", script.is_img2img)
             if controls is None:
                 return
+            script.name = wrap_call(script.title, script.filename, "title", default=script.filename).lower()
+            api_args = []
             for control in controls:
                 control.custom_script_source = os.path.basename(script.filename)
+                arg_info = api_models.ScriptArg(label=control.label or "")
+                for field in ("value", "minimum", "maximum", "step", "choices"):
+                    v = getattr(control, field, None)
+                    if v is not None:
+                        setattr(arg_info, field, v)
+                api_args.append(arg_info)
+
+            script.api_info = api_models.ScriptInfo(
+                name=script.name,
+                is_img2img=script.is_img2img,
+                is_alwayson=script.alwayson,
+                args=api_args,
+            )
             if script.infotext_fields is not None:
                 self.infotext_fields += script.infotext_fields
             if script.paste_field_names is not None:
@@ -325,7 +338,6 @@ class ScriptRunner:
             inputs_alwayson += [script.alwayson for _ in controls]
             script.args_to = len(inputs)
 
-        s = []
         with gr.Group(elem_id='scripts_alwayson_img2img' if self.is_img2img else 'scripts_alwayson_txt2img'):
             for script in self.alwayson_scripts:
                 t0 = time.time()
@@ -337,7 +349,6 @@ class ScriptRunner:
 
         dropdown = gr.Dropdown(label="Script", elem_id="script_list", choices=["None"] + self.titles, value="None", type="index")
         inputs[0] = dropdown
-        s = []
         for script in self.selectable_scripts:
             with gr.Group(visible=False) as group:
                 t0 = time.time()
@@ -487,7 +498,7 @@ class ScriptRunner:
             if module is None:
                 module = script_loading.load_module(script.filename)
                 cache[filename] = module
-            for _key, script_class in module.__dict__.items():
+            for script_class in module.__dict__.values():
                 if type(script_class) == type and issubclass(script_class, Script):
                     self.scripts[si] = script_class()
                     self.scripts[si].filename = filename
@@ -497,24 +508,17 @@ class ScriptRunner:
         log.debug(f'Script reload-sources: {s}')
 
 
-scripts_txt2img = ScriptRunner()
-scripts_img2img = ScriptRunner()
-scripts_postproc = scripts_postprocessing.ScriptPostprocessingRunner()
+scripts_txt2img: ScriptRunner = None
+scripts_img2img: ScriptRunner = None
 scripts_current: ScriptRunner = None
+scripts_postproc: scripts_postprocessing.ScriptPostprocessingRunner = None
+reload_scripts = load_scripts  # compatibility alias
 
 
 def reload_script_body_only():
     cache = {}
     scripts_txt2img.reload_sources(cache)
     scripts_img2img.reload_sources(cache)
-
-
-def reload_scripts():
-    global scripts_txt2img, scripts_img2img, scripts_postproc # pylint: disable=global-statement
-    load_scripts()
-    scripts_txt2img = ScriptRunner()
-    scripts_img2img = ScriptRunner()
-    scripts_postproc = scripts_postprocessing.ScriptPostprocessingRunner()
 
 
 def add_classes_to_gradio_component(comp):

@@ -210,7 +210,7 @@ class EmbeddingDatabase:
             return
         if not force_reload:
             need_reload = False
-            for _path, embdir in self.embedding_dirs.items():
+            for embdir in self.embedding_dirs.values():
                 if embdir.has_changed():
                     need_reload = True
                     break
@@ -223,7 +223,7 @@ class EmbeddingDatabase:
         self.skipped_embeddings.clear()
         self.expected_shape = self.get_expected_shape()
 
-        for _path, embdir in self.embedding_dirs.items():
+        for embdir in self.embedding_dirs.values():
             self.load_from_dir(embdir)
             embdir.update()
 
@@ -430,8 +430,7 @@ def train_embedding(id_task, embedding_name, learn_rate, batch_size, gradient_st
             shared.log.info("No saved optimizer exists in checkpoint")
 
     if shared.cmd_opts.use_ipex:
-        shared.sd_model.train()
-        shared.sd_model, optimizer = torch.xpu.optimize(shared.sd_model.to(dtype=torch.float32), optimizer=optimizer, dtype=devices.dtype) 
+        scaler = torch.xpu.amp.GradScaler()
     else:
         scaler = torch.cuda.amp.GradScaler()
 
@@ -489,20 +488,15 @@ def train_embedding(id_task, embedding_name, learn_rate, batch_size, gradient_st
                     del x
                     _loss_step += loss.item()
 
-                if shared.cmd_opts.use_ipex:
-                    loss.backward()
-                else:
-                    scaler.scale(loss).backward()
+                scaler.scale(loss).backward()
                 # go back until we reach gradient accumulation steps
                 if (j + 1) % gradient_step != 0:
                     continue
                 if clip_grad:
                     clip_grad(embedding.vec, clip_grad_sched.learn_rate)
-                if shared.cmd_opts.use_ipex:
-                    optimizer.step()
-                else:
-                    scaler.step(optimizer)
-                    scaler.update()
+
+                scaler.step(optimizer)
+                scaler.update()
                 embedding.step += 1
                 pbar.update()
                 optimizer.zero_grad(set_to_none=True)
@@ -621,7 +615,7 @@ def save_embedding(embedding, optimizer, checkpoint, embedding_name, filename, r
         embedding.name = embedding_name
         embedding.optimizer_state_dict = optimizer.state_dict()
         embedding.save(filename)
-    except:
+    except Exception:
         embedding.sd_checkpoint = old_sd_checkpoint
         embedding.sd_checkpoint_name = old_sd_checkpoint_name
         embedding.name = old_embedding_name
